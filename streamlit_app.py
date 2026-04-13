@@ -151,10 +151,10 @@ def run_full_pipeline():
 # ══════════════════════════════════════════════════════
 #  헬퍼
 # ══════════════════════════════════════════════════════
-  def fmt_won(v):
+def fmt_won(v):
       if not v: return "0"
       return f"{int(v):,}"
-
+  
 def fmt_qty(v):
     return f"{int(v):,}개" if v else "0개"
 
