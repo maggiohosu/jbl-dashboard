@@ -94,16 +94,16 @@ html, body, [class*="css"] { font-family: 'Noto Sans KR', sans-serif; }
 #  환경 감지 (PC 로컬 vs Streamlit Cloud)
 # ══════════════════════════════════════════════════════
 def _is_cloud():
-      """Streamlit Cloud 환경이면 True"""
-      # Streamlit Cloud 앱 경로는 /mount/src/ 로 시작
-      if os.path.abspath(__file__).startswith("/mount/src/"):
-          return True
-      if "STREAMLIT_SHARING_MODE" in os.environ:
-          return True
-      try:
-          return st.secrets.get("GITHUB_TOKEN", "") != ""
-      except Exception:
-          return False
+    """Streamlit Cloud 환경이면 True"""
+    # Streamlit Cloud 앱 경로는 /mount/src/ 로 시작
+    if os.path.abspath(__file__).startswith("/mount/src/"):
+        return True
+    if "STREAMLIT_SHARING_MODE" in os.environ:
+        return True
+    try:
+        return st.secrets.get("GITHUB_TOKEN", "") != ""
+    except Exception:
+        return False
 
 # ══════════════════════════════════════════════════════
 #  데이터 로드
@@ -159,9 +159,9 @@ def run_full_pipeline():
 #  헬퍼
 # ══════════════════════════════════════════════════════
 def fmt_won(v):
-      if not v: return "0"
-      return f"{int(v):,}"
-  
+    if not v: return "0"
+    return f"{int(v):,}"
+
 def fmt_qty(v):
     return f"{int(v):,}개" if v else "0개"
 
