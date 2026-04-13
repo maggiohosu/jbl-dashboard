@@ -94,9 +94,16 @@ html, body, [class*="css"] { font-family: 'Noto Sans KR', sans-serif; }
 #  환경 감지 (PC 로컬 vs Streamlit Cloud)
 # ══════════════════════════════════════════════════════
 def _is_cloud():
-    """Streamlit Cloud 환경이면 True"""
-    return "STREAMLIT_SHARING_MODE" in os.environ or \
-           st.secrets.get("GITHUB_TOKEN", "") != ""
+      """Streamlit Cloud 환경이면 True"""
+      # Streamlit Cloud 앱 경로는 /mount/src/ 로 시작
+      if os.path.abspath(__file__).startswith("/mount/src/"):
+          return True
+      if "STREAMLIT_SHARING_MODE" in os.environ:
+          return True
+      try:
+          return st.secrets.get("GITHUB_TOKEN", "") != ""
+      except Exception:
+          return False
 
 # ══════════════════════════════════════════════════════
 #  데이터 로드
