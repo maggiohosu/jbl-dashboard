@@ -112,10 +112,16 @@ def _is_cloud():
 def load_data_cloud():
     """Streamlit Cloud 전용: GitHub 저장소에서 dash_data.json 읽기"""
     import urllib.request, json as _json
-    token = st.secrets.get("GITHUB_TOKEN", "")
-    repo  = st.secrets.get("GITHUB_REPO", "maggiohosu/jbl-dashboard")
-    url   = f"https://raw.githubusercontent.com/{repo}/main/dash_data.json"
-    req   = urllib.request.Request(url)
+    try:
+        token = st.secrets.get("GITHUB_TOKEN", "")
+    except Exception:
+        token = ""
+    try:
+        repo = st.secrets.get("GITHUB_REPO", "maggiohosu/jbl-dashboard")
+    except Exception:
+        repo = "maggiohosu/jbl-dashboard"
+    url = f"https://raw.githubusercontent.com/{repo}/main/dash_data.json"
+    req = urllib.request.Request(url)
     if token:
         req.add_header("Authorization", f"token {token}")
     try:
@@ -659,6 +665,10 @@ def main():
     # ── 데이터 로드 ───────────────────────────────────
     D = load_data()
     if D is None:
+        if _is_cloud():
+            st.error("⚠️ 데이터를 불러오지 못했습니다.")
+            st.markdown("**🔄 새로고침** 버튼을 눌러주세요. 계속 오류가 나면 담당자에게 문의하세요.")
+            return
         import os as _os
         FOLDER = _os.path.dirname(_os.path.abspath(__file__))
         master = _os.path.join(FOLDER, "데이터_마스터.xlsx")
