@@ -1,17 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-JBL 실판매현황 Streamlit 대시보드 (모바일 최적화)
-PC 판매현황_대시보드.html 과 동일한 내용 · 4탭 동일 구성
-수정사항:
-  1. 데이터 생성 버튼 → PC HTML도 함께 생성
-  2. 월 선택 → st.selectbox (모바일 친화적)
-  3. PC 대시보드 내용과 동일하게 정렬
-  4. 터치 드릴다운 (expander/selectbox)
+JBL 실판매 대시보드 v2 (app_new.py)
+8개 탭 구성: 개요 / 마켓별 / 모델별 / 세그먼트별 / 추이 / 성장/하락 / 반품
 """
 
-import os, sys, time
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
+import os, json, urllib.request
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -20,20 +13,44 @@ import plotly.graph_objects as go
 #  페이지 설정
 # ══════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="JBL 실판매현황",
-    page_icon="📊",
+    page_title="JBL 실판매 대시보드",
+    page_icon="🎵",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
+# ══════════════════════════════════════════════════════
+#  공통 CSS
+# ══════════════════════════════════════════════════════
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&display=swap');
 html, body, [class*="css"] { font-family: 'Noto Sans KR', sans-serif; }
 .stApp { background: #F0F2F5; }
-.block-container { padding: 12px 12px 32px 12px !important; max-width: 1400px; }
+.block-container { padding: 12px 12px 40px 12px !important; max-width: 1400px; }
 
-/* ── 요약 스트립 ── */
+/* KPI 카드 */
+.kpi-card {
+  background: #fff; border-radius: 12px; border: 1px solid #E5E7EB;
+  padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08);
+  margin-bottom: 10px;
+}
+.kpi-value { font-size: 24px; font-weight: 700; color: #111827; line-height: 1.2; }
+.kpi-label { font-size: 11px; font-weight: 600; color: #6B7280;
+             text-transform: uppercase; letter-spacing: .5px; margin-bottom: 4px; }
+.kpi-delta-pos { color: #16A34A; font-size: 13px; font-weight: 700; }
+.kpi-delta-neg { color: #DC2626; font-size: 13px; font-weight: 700; }
+.kpi-delta-neu { color: #6B7280; font-size: 13px; font-weight: 700; }
+.kpi-sub { font-size: 12px; color: #6B7280; margin-top: 2px; }
+
+/* 섹션 헤더 */
+.section-header {
+  font-size: 15px; font-weight: 700; color: #1F2937;
+  border-left: 4px solid #2563EB; padding-left: 10px;
+  margin: 18px 0 10px 0;
+}
+
+/* 요약 그리드 */
 .sum-strip {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -45,8 +62,7 @@ html, body, [class*="css"] { font-family: 'Noto Sans KR', sans-serif; }
 }
 .sum-label { font-size: 10px; font-weight: 700; color: #6B7280;
              text-transform: uppercase; letter-spacing: .4px; margin-bottom: 6px; }
-.sum-val   { font-size: 22px; font-weight: 700; color: #111827;
-             font-family: 'Inter', sans-serif; line-height: 1; }
+.sum-val   { font-size: 22px; font-weight: 700; color: #111827; line-height: 1; }
 .sum-sub   { font-size: 11px; color: #6B7280; margin-top: 4px; }
 .sum-tag   { display: inline-block; font-size: 11px; font-weight: 700;
              padding: 2px 8px; border-radius: 20px; margin-left: 4px; }
@@ -54,28 +70,27 @@ html, body, [class*="css"] { font-family: 'Noto Sans KR', sans-serif; }
 .sum-tag.yellow { background: #FFFBEB; color: #D97706; }
 .sum-tag.red    { background: #FEF2F2; color: #DC2626; }
 
-/* ── 마켓 KPI 그리드 ── */
-.kpi-grid {
+/* 마켓 KPI 그리드 */
+.mkt-kpi-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px; margin-bottom: 14px;
 }
-.kpi-card {
+.mkt-kpi-card {
   background: #fff; border-radius: 10px; border: 1px solid #E2E6EA;
   border-left: 4px solid #2563EB;
   padding: 13px 14px; box-shadow: 0 1px 3px rgba(0,0,0,.07);
 }
-.kpi-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-.kpi-name   { font-size: 13px; font-weight: 700; }
-.kpi-badge  { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 20px; }
-.kpi-actual { font-size: 18px; font-weight: 700; color: #111827;
-              font-family: 'Inter', sans-serif; }
-.kpi-meta   { font-size: 11px; color: #6B7280; margin-top: 2px; }
-.kpi-bar-bg { height: 4px; background: #F1F5F9; border-radius: 4px;
-              margin-top: 8px; overflow: hidden; }
-.kpi-bar-fill { height: 100%; border-radius: 4px; transition: width .4s; }
+.mkt-kpi-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.mkt-kpi-name   { font-size: 13px; font-weight: 700; }
+.mkt-kpi-badge  { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 20px; }
+.mkt-kpi-actual { font-size: 18px; font-weight: 700; color: #111827; }
+.mkt-kpi-meta   { font-size: 11px; color: #6B7280; margin-top: 2px; }
+.mkt-kpi-bar-bg { height: 4px; background: #F1F5F9; border-radius: 4px;
+                  margin-top: 8px; overflow: hidden; }
+.mkt-kpi-bar-fill { height: 100%; border-radius: 4px; }
 
-/* ── 탭 ── */
+/* 탭 */
 [data-testid="stTabs"] > div:first-child {
   overflow-x: auto; flex-wrap: nowrap !important; scrollbar-width: none;
 }
@@ -84,107 +99,104 @@ html, body, [class*="css"] { font-family: 'Noto Sans KR', sans-serif; }
   font-size: 13px !important; font-weight: 600 !important;
   white-space: nowrap !important; padding: 10px 14px !important;
 }
-
-/* ── expander 터치 영역 확대 ── */
+/* expander 터치 */
 [data-testid="stExpander"] summary { min-height: 44px; display: flex; align-items: center; }
+
+/* 랭킹 카드 */
+.rank-card {
+  background: #fff; border-radius: 10px; border: 1px solid #E5E7EB;
+  padding: 12px 14px; margin-bottom: 8px;
+  display: flex; align-items: center; gap: 12px;
+}
+.rank-medal { font-size: 22px; min-width: 28px; }
+.rank-name  { font-size: 14px; font-weight: 700; color: #111827; }
+.rank-sub   { font-size: 12px; color: #6B7280; margin-top: 2px; }
+
+/* 성장/하락 배지 */
+.badge-grow { background: #F0FDF4; color: #16A34A; font-size: 12px;
+              font-weight: 700; padding: 2px 8px; border-radius: 20px; }
+.badge-drop { background: #FEF2F2; color: #DC2626; font-size: 12px;
+              font-weight: 700; padding: 2px 8px; border-radius: 20px; }
+
+/* 테이블 */
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table th { background: #F9FAFB; color: #374151; font-weight: 700;
+                 padding: 8px 10px; border-bottom: 2px solid #E5E7EB; text-align: left; }
+.data-table td { padding: 8px 10px; border-bottom: 1px solid #F3F4F6; color: #374151; }
+.data-table tr:hover td { background: #F9FAFB; }
 </style>
 """, unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════
-#  환경 감지 (PC 로컬 vs Streamlit Cloud)
+#  상수
 # ══════════════════════════════════════════════════════
-def _is_cloud():
-    """Streamlit Cloud 환경이면 True"""
-    # Streamlit Cloud 앱 경로는 /mount/src/ 로 시작
-    if os.path.abspath(__file__).startswith("/mount/src/"):
-        return True
-    if "STREAMLIT_SHARING_MODE" in os.environ:
-        return True
-    try:
-        return st.secrets.get("GITHUB_TOKEN", "") != ""
-    except Exception:
-        return False
+POSITIVE_COLOR = "#16A34A"
+NEGATIVE_COLOR = "#DC2626"
+NEUTRAL_COLOR  = "#6B7280"
+PRIMARY_COLOR  = "#1D4ED8"
+GITHUB_REPO    = "maggiohosu/jbl-dashboard"
+
+CHART_LAYOUT = dict(
+    plot_bgcolor="#FFFFFF",
+    paper_bgcolor="#FFFFFF",
+    font=dict(family="Noto Sans KR, sans-serif", size=12),
+    margin=dict(l=10, r=10, t=30, b=10),
+    hovermode="x unified",
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+)
+
+FOLDER     = os.path.dirname(os.path.abspath(__file__))
+LOCAL_JSON = os.path.join(FOLDER, "dash_data.json")
 
 # ══════════════════════════════════════════════════════
 #  데이터 로드
 # ══════════════════════════════════════════════════════
 @st.cache_data(ttl=300, show_spinner=False)
-def load_data_cloud():
-    """Streamlit Cloud 전용: GitHub 저장소에서 dash_data.json 읽기"""
-    import urllib.request, json as _json
+def load_data():
+    if os.path.exists(LOCAL_JSON):
+        with open(LOCAL_JSON, encoding="utf-8") as f:
+            return json.load(f)
     try:
-        token = st.secrets.get("GITHUB_TOKEN", "")
-    except Exception:
-        token = ""
-    try:
-        repo = st.secrets.get("GITHUB_REPO", "maggiohosu/jbl-dashboard")
-    except Exception:
-        repo = "maggiohosu/jbl-dashboard"
-    url = f"https://raw.githubusercontent.com/{repo}/main/dash_data.json"
-    req = urllib.request.Request(url)
-    if token:
-        req.add_header("Authorization", f"token {token}")
-    try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            return _json.loads(r.read())
+        url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/dash_data.json"
+        with urllib.request.urlopen(url, timeout=15) as r:
+            return json.loads(r.read())
     except Exception:
         return None
 
-@st.cache_data(ttl=30, show_spinner=False)
-def load_data_local():
-    """PC 로컬 전용: process_sales 에서 직접 읽기"""
-    import process_sales as ps
-    return ps.get_dash_data()
-
-def load_data():
-    if _is_cloud():
-        return load_data_cloud()
-    return load_data_local()
-
-def run_full_pipeline():
-    """PC HTML 포함 전체 파이프라인 실행 — 출력 로그를 반환"""
-    import io, sys, traceback
-    import process_sales as ps
-
-    buf = io.StringIO()
-    old_stdout, old_stderr = sys.stdout, sys.stderr
-    sys.stdout = sys.stderr = buf
-    try:
-        ps.main()
-        log = buf.getvalue()
-        error = None
-    except Exception:
-        log = buf.getvalue()
-        error = traceback.format_exc()
-    finally:
-        sys.stdout, sys.stderr = old_stdout, old_stderr
-
-    return log, error
-
 # ══════════════════════════════════════════════════════
-#  헬퍼
+#  헬퍼 함수
 # ══════════════════════════════════════════════════════
-def fmt_won(v):
-    if not v: return "0"
-    return f"{int(v):,}"
+def fmt_won(v, unit="원"):
+    if not v: return f"0{unit}"
+    if abs(v) >= 100_000_000:
+        return f"{v/100_000_000:.1f}억{unit}"
+    if abs(v) >= 10_000:
+        return f"{v/10_000:.0f}만{unit}"
+    return f"{int(v):,}{unit}"
 
 def fmt_qty(v):
     return f"{int(v):,}개" if v else "0개"
 
+def fmt_pct(v):
+    if v is None: return "-"
+    sign = "+" if v >= 0 else ""
+    return f"{sign}{v*100:.1f}%"
+
+def growth_color(v):
+    if v is None or v == 0: return NEUTRAL_COLOR
+    return POSITIVE_COLOR if v > 0 else NEGATIVE_COLOR
+
+def growth_tag(v):
+    if v is None: return ""
+    pct = v * 100
+    sign = "▲" if pct >= 0 else "▼"
+    color = POSITIVE_COLOR if pct >= 0 else NEGATIVE_COLOR
+    return f'<span style="color:{color};font-weight:700">{sign}{abs(pct):.1f}%</span>'
+
 def pct_color(rate):
     if rate >= 1.0: return {"bg":"#F0FDF4","text":"#16A34A","fill":"#16A34A","tag":"green","lbl":"목표 달성"}
     if rate >= 0.7: return {"bg":"#FFFBEB","text":"#D97706","fill":"#D97706","tag":"yellow","lbl":"순조"}
-    return          {"bg":"#FEF2F2","text":"#DC2626","fill":"#DC2626","tag":"red","lbl":"달성 필요"}
-
-def sum_month(d: dict, month: int) -> int:
-    if not d: return 0
-    if month == 0: return sum(d.values())
-    return sum(v for k, v in d.items()
-               if isinstance(k, str) and len(k) >= 7 and k[5:7] == f"{month:02d}")
-
-def filter_dates(dates: list, month: int) -> list:
-    if month == 0: return dates
-    return [d for d in dates if isinstance(d, str) and len(d) >= 7 and d[5:7] == f"{month:02d}"]
+    return              {"bg":"#FEF2F2","text":"#DC2626","fill":"#DC2626","tag":"red","lbl":"달성 필요"}
 
 def linear_trend(ys):
     n = len(ys)
@@ -196,535 +208,1268 @@ def linear_trend(ys):
     b = my - s*mx
     return [s*x + b for x in xs]
 
-PLT = dict(
-    plot_bgcolor="#fff", paper_bgcolor="#fff",
-    font_family="Noto Sans KR",
-    margin=dict(l=0, r=0, t=10, b=0),
-    hovermode="x unified",
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-)
+def sum_by_month(data: dict, month_str: str) -> float:
+    """월별 집계 딕셔너리에서 특정 월 값 반환"""
+    if not data: return 0
+    return data.get(month_str, 0) or 0
 
-def mkt_actual(D, mkt, month):
-    return sum_month(D.get("mktDayRev",{}).get(mkt,{}), month)
+def section_header(text):
+    st.markdown(f'<div class="section-header">{text}</div>', unsafe_allow_html=True)
 
-def mkt_target(D, mkt, month):
-    if month == 0:
-        return sum(D.get("targets",{}).get(mkt,{}).values())
-    mt = D.get("monthlyTargets",{}).get(mkt,{})
-    return mt.get(str(month), mt.get(month, 0)) or 0
+def no_data(msg="데이터가 없습니다."):
+    st.info(msg)
 
 # ══════════════════════════════════════════════════════
-#  ① 마켓별 매출 탭
+#  차트 공통 함수
 # ══════════════════════════════════════════════════════
-def tab_market(D, month):
-    markets    = D.get("markets", [])
-    mkt_colors = D.get("mktColors", {})
-    wk_lbl     = D.get("weekLabels", {})
-    wk_count   = int(D.get("weekCount", 5))
-    mkt_wk_rev = D.get("mktWkRev", {})
+def make_mom_chart(month_rev: dict, mom_data: dict, color: str, name: str = "", height: int = 300):
+    """MoM bar+line 혼합 차트"""
+    months = sorted(month_rev.keys())
+    if not months:
+        return None
+    revs  = [month_rev[m] / 10000 for m in months]
+    rates = [mom_data.get(m, 0) * 100 if mom_data.get(m) is not None else 0 for m in months]
 
-    actuals = {m: mkt_actual(D, m, month) for m in markets}
-    tgts    = {m: mkt_target(D, m, month) for m in markets}
-    total_a = sum(actuals.values())
-    total_t = sum(tgts.values())
-    total_r = total_a / total_t if total_t else 0
-
-    # 총 판매 수량
-    models     = D.get("models", [])
-    dates_all  = D.get("dates", [])
-    filt_dates = filter_dates(dates_all, month)
-    total_qty  = sum(
-        sum(md.get(d, 0) for mk in m.get("dayData",{}).values()
-            for d in [ds for ds in filt_dates if ds in mk])
-        for m in models
-        for md in [{}]  # placeholder — compute below
+    fig = go.Figure()
+    fig.add_bar(
+        x=months, y=revs,
+        name=f"{name} 매출(만원)", marker_color=color, opacity=0.8,
+        yaxis="y1",
+        hovertemplate="%{x}<br>매출: %{y:,.0f}만원<extra></extra>",
     )
-    # 실제 수량 계산
-    total_qty = 0
-    for m in models:
-        for mkt_d in m.get("dayData", {}).values():
-            for d in filt_dates:
-                total_qty += mkt_d.get(d, 0)
+    fig.add_scatter(
+        x=months, y=rates,
+        name="MoM(%)", mode="lines+markers+text",
+        text=[f"{r:+.1f}%" for r in rates],
+        textposition="top center",
+        textfont=dict(size=10, color="#374151"),
+        line=dict(color="#374151", width=2), marker=dict(size=6),
+        yaxis="y2",
+        hovertemplate="%{x}<br>MoM: %{y:+.1f}%<extra></extra>",
+    )
+    fig.update_layout(
+        **CHART_LAYOUT,
+        height=height,
+        yaxis=dict(title="매출(만원)", showgrid=True, gridcolor="#F3F4F6"),
+        yaxis2=dict(
+            title="전월대비(%)", overlaying="y", side="right",
+            showgrid=False, zeroline=True, zerolinecolor="#9CA3AF",
+        ),
+    )
+    return fig
 
-    period_lbl = f"{month}월 기준" if month else "전체 기간"
-    pc = pct_color(total_r)
+def make_wow_chart(wk_rev: dict, wow_data: dict, wk_labels: dict, color: str, name: str = "", height: int = 300):
+    """WoW bar+line 혼합 차트"""
+    wks = sorted(wk_rev.keys(), key=lambda x: int(x))
+    if not wks:
+        return None
+    lbls  = [wk_labels.get(w, f"{w}주차") for w in wks]
+    revs  = [wk_rev[w] / 10000 for w in wks]
+    rates = [wow_data.get(w, 0) * 100 if wow_data.get(w) is not None else 0 for w in wks]
 
-    # ── 요약 스트립 (PC와 동일) ──────────────────────
-    st.markdown(f"""
-    <div class="sum-strip">
-      <div class="sum-card">
-        <div class="sum-label">총 매출 ({period_lbl})</div>
-        <div class="sum-val">{fmt_won(total_a)}원</div>
-        <div class="sum-sub">목표 {fmt_won(total_t)}원</div>
-      </div>
-      <div class="sum-card">
-        <div class="sum-label">목표 달성률</div>
-        <div class="sum-val">{total_r*100:.1f}%</div>
-        <div class="sum-sub">전체 마켓 합산
-          <span class="sum-tag {pc['tag']}">{pc['lbl']}</span>
+    fig = go.Figure()
+    fig.add_bar(
+        x=lbls, y=revs,
+        name=f"{name} 매출(만원)", marker_color=color, opacity=0.8,
+        yaxis="y1",
+        hovertemplate="%{x}<br>매출: %{y:,.0f}만원<extra></extra>",
+    )
+    fig.add_scatter(
+        x=lbls, y=rates,
+        name="WoW(%)", mode="lines+markers+text",
+        text=[f"{r:+.1f}%" for r in rates],
+        textposition="top center",
+        textfont=dict(size=10, color="#374151"),
+        line=dict(color="#374151", width=2), marker=dict(size=6),
+        yaxis="y2",
+        hovertemplate="%{x}<br>WoW: %{y:+.1f}%<extra></extra>",
+    )
+    fig.update_layout(
+        **CHART_LAYOUT,
+        height=height,
+        yaxis=dict(title="매출(만원)", showgrid=True, gridcolor="#F3F4F6"),
+        yaxis2=dict(
+            title="전주대비(%)", overlaying="y", side="right",
+            showgrid=False, zeroline=True, zerolinecolor="#9CA3AF",
+        ),
+    )
+    return fig
+
+def show_top3_cards(top3_data, col_name="model"):
+    medals = ["🥇", "🥈", "🥉"]
+    for i, item in enumerate(top3_data[:3]):
+        name = item.get(col_name, item.get("cat", item.get("model", "")))
+        rev  = item.get("rev", 0)
+        qty  = item.get("qty", 0)
+        st.markdown(f"""
+        <div class="rank-card">
+          <div class="rank-medal">{medals[i]}</div>
+          <div>
+            <div class="rank-name">{name}</div>
+            <div class="rank-sub">{fmt_won(rev)} · {qty:,}개</div>
+          </div>
         </div>
-      </div>
-      <div class="sum-card">
-        <div class="sum-label">판매 수량 ({period_lbl})</div>
-        <div class="sum-val">{total_qty:,}개</div>
-        <div class="sum-sub">{len(models)}개 모델</div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
 
-    # ── 마켓 KPI 카드 (PC와 동일 구조, 터치 드릴다운 포함) ──
-    cards_html = '<div class="kpi-grid">'
+def show_growth_list(items, name_key, prefix="▲"):
+    """성장/하락 목록 표시"""
+    if not items:
+        no_data(); return
+    rows = []
+    for item in items:
+        name = item.get(name_key, "")
+        prev = item.get("prevRev", 0)
+        curr = item.get("currRev", 0)
+        rate = item.get("growthRate", 0)
+        rows.append({
+            "이름": name,
+            "전기": fmt_won(prev),
+            "현기": fmt_won(curr),
+            "증감율": fmt_pct(rate),
+        })
+    df = pd.DataFrame(rows)
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+# ══════════════════════════════════════════════════════
+#  TAB 1: 개요 (Overview)
+# ══════════════════════════════════════════════════════
+def tab_overview(D):
+    markets      = D.get("markets", [])
+    mkt_colors   = D.get("mktColors", {})
+    report_year  = D.get("reportYear", 2026)
+    report_month = D.get("reportMonth", 4)
+    data_months  = D.get("dataMonths", [])
+    cur_m        = f"{report_year}-{report_month:02d}"
+    prev_m_idx   = data_months.index(cur_m) - 1 if cur_m in data_months and data_months.index(cur_m) > 0 else -1
+    prev_m       = data_months[prev_m_idx] if prev_m_idx >= 0 else None
+
+    mkt_month_rev = D.get("mktMonthRev", {})
+    mkt_month_qty = D.get("mktMonthQty", {})
+    monthly_tgts  = D.get("monthlyTargets", {})
+
+    # 전체 이번달/전월 매출
+    total_curr = sum(mkt_month_rev.get(m, {}).get(cur_m, 0) or 0 for m in markets)
+    total_prev = sum(mkt_month_rev.get(m, {}).get(prev_m, 0) or 0 for m in markets) if prev_m else 0
+    total_qty  = sum(mkt_month_qty.get(m, {}).get(cur_m, 0) or 0 for m in markets)
+
+    # 전체 기간 매출
+    all_rev = sum(
+        v for m in markets
+        for v in mkt_month_rev.get(m, {}).values()
+        if v
+    )
+
+    mom_rate = (total_curr - total_prev) / total_prev if total_prev else None
+    mom_html = growth_tag(mom_rate) if mom_rate is not None else ""
+
+    # 이번달 목표 / 달성률
+    total_tgt = sum(
+        (monthly_tgts.get(m, {}).get(str(report_month), 0) or 0)
+        for m in markets
+    )
+    ach_rate = total_curr / total_tgt if total_tgt else 0
+
+    # ── KPI 카드 행 ─────────────────────────────────────
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown(f"""
+        <div class="kpi-card">
+          <div class="kpi-label">전체 누적 매출</div>
+          <div class="kpi-value">{fmt_won(all_rev)}</div>
+          <div class="kpi-sub">{D.get("period", "-")}</div>
+        </div>""", unsafe_allow_html=True)
+    with c2:
+        st.markdown(f"""
+        <div class="kpi-card">
+          <div class="kpi-label">{report_month}월 매출</div>
+          <div class="kpi-value">{fmt_won(total_curr)}</div>
+          <div class="kpi-sub">전월 대비 {mom_html}</div>
+        </div>""", unsafe_allow_html=True)
+    with c3:
+        pc = pct_color(ach_rate)
+        st.markdown(f"""
+        <div class="kpi-card">
+          <div class="kpi-label">{report_month}월 목표 달성률</div>
+          <div class="kpi-value" style="color:{pc['text']}">{ach_rate*100:.1f}%</div>
+          <div class="kpi-sub">목표: {fmt_won(total_tgt)}</div>
+        </div>""", unsafe_allow_html=True)
+    with c4:
+        st.markdown(f"""
+        <div class="kpi-card">
+          <div class="kpi-label">{report_month}월 판매 수량</div>
+          <div class="kpi-value">{total_qty:,}개</div>
+          <div class="kpi-sub">{len(D.get("modelList", []))}개 모델</div>
+        </div>""", unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ── 마켓별 목표 달성률 게이지 ────────────────────────
+    section_header(f"마켓별 목표 달성률 ({report_month}월)")
+    cards_html = '<div class="mkt-kpi-grid">'
     for m in markets:
         col   = mkt_colors.get(m, "#607D8B")
-        act   = actuals[m]; tgt = tgts[m]
-        rate  = act/tgt if tgt else 0
-        pct   = min(100, rate*100)
+        act   = mkt_month_rev.get(m, {}).get(cur_m, 0) or 0
+        tgt   = monthly_tgts.get(m, {}).get(str(report_month), 0) or 0
+        rate  = act / tgt if tgt else 0
+        pct   = min(100, rate * 100)
         pc    = pct_color(rate)
         cards_html += f"""
-        <div class="kpi-card" style="border-left-color:{col}">
-          <div class="kpi-header">
-            <div class="kpi-name" style="color:{col}">{m}</div>
-            <div class="kpi-badge" style="background:{pc['bg']};color:{pc['text']}">{rate*100:.1f}%</div>
+        <div class="mkt-kpi-card" style="border-left-color:{col}">
+          <div class="mkt-kpi-header">
+            <div class="mkt-kpi-name" style="color:{col}">{m}</div>
+            <div class="mkt-kpi-badge" style="background:{pc['bg']};color:{pc['text']}">{rate*100:.1f}%</div>
           </div>
-          <div class="kpi-actual">{fmt_won(act)}<span style="font-size:12px;color:#6B7280;font-weight:400;">원</span></div>
-          <div class="kpi-meta">목표 {fmt_won(tgt)}원</div>
-          <div class="kpi-bar-bg"><div class="kpi-bar-fill" style="width:{pct:.0f}%;background:{pc['fill']}"></div></div>
+          <div class="mkt-kpi-actual">{fmt_won(act)}</div>
+          <div class="mkt-kpi-meta">목표 {fmt_won(tgt)}</div>
+          <div class="mkt-kpi-bar-bg">
+            <div class="mkt-kpi-bar-fill" style="width:{pct:.0f}%;background:{pc['fill']}"></div>
+          </div>
         </div>"""
     cards_html += '</div>'
     st.markdown(cards_html, unsafe_allow_html=True)
 
-    # ── 달성률 바 차트 (PC와 동일: 달성률 % 기준) ────────
-    rates  = [actuals[m]/tgts[m]*100 if tgts[m] else 0 for m in markets]
-    colors = [pct_color(r/100)["fill"] for r in rates]
+    # ── 달성률 바 차트 ──────────────────────────────────
+    rates_list  = []
+    colors_list = []
+    for m in markets:
+        act = mkt_month_rev.get(m, {}).get(cur_m, 0) or 0
+        tgt = monthly_tgts.get(m, {}).get(str(report_month), 0) or 0
+        r   = act / tgt * 100 if tgt else 0
+        rates_list.append(r)
+        colors_list.append(pct_color(r/100)["fill"])
 
     fig = go.Figure()
     fig.add_bar(
-        x=markets, y=rates,
-        marker_color=colors, marker_line_width=0,
-        text=[f"{r:.1f}%" for r in rates],
+        x=markets, y=rates_list,
+        marker_color=colors_list, marker_line_width=0,
+        text=[f"{r:.1f}%" for r in rates_list],
         textposition="outside", textfont_size=12,
-        customdata=[[fmt_won(actuals[m]), fmt_won(tgts[m])] for m in markets],
-        hovertemplate="<b>%{x}</b><br>달성률: %{y:.1f}%<br>실적: %{customdata[0]}원<br>목표: %{customdata[1]}원<extra></extra>",
+        hovertemplate="<b>%{x}</b><br>달성률: %{y:.1f}%<extra></extra>",
     )
-    # 100% 기준선
     fig.add_hline(y=100, line_dash="dot", line_color="rgba(22,163,74,.5)", line_width=1.5)
     fig.update_layout(
-        **PLT, height=280,
-        yaxis=dict(showgrid=True, gridcolor="#F3F4F6", title="달성률 (%)",
-                   range=[0, max(max(rates)*1.15, 110)]),
+        **CHART_LAYOUT, height=280,
+        yaxis=dict(showgrid=True, gridcolor="#F3F4F6", title="달성률(%)",
+                   range=[0, max(max(rates_list) * 1.2, 120)]),
         xaxis=dict(showgrid=False),
         showlegend=False,
+        title=dict(text=f"{report_month}월 마켓별 달성률", font=dict(size=14), x=0.01),
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # ── 마켓별 드릴다운 (터치 → 주차별 상세) ─────────────
-    st.markdown("#### 마켓별 주차 상세 _(터치해서 펼치기)_")
-    wks = [str(w) for w in range(1, wk_count+1)]
-    for m in markets:
-        col   = mkt_colors.get(m, "#607D8B")
-        act   = actuals[m]; rate = act/tgts[m]*100 if tgts[m] else 0
-        pc    = pct_color(rate/100)
-        with st.expander(f"**{m}** — {fmt_won(act)}원  |  달성률 {rate:.1f}%"):
-            wk_data = mkt_wk_rev.get(m, {})
-            if wk_data:
-                # 주차별 바 차트
-                wk_vals = [wk_data.get(w, 0)/10000 for w in wks]
-                wk_lbls = [wk_lbl.get(w, f"{w}주차") for w in wks]
-                fig2 = go.Figure()
-                fig2.add_bar(x=wk_lbls, y=wk_vals,
-                             marker_color=col, marker_opacity=0.8,
-                             text=[f"{v:,.0f}만" for v in wk_vals],
-                             textposition="outside", textfont_size=11)
-                fig2.update_layout(**PLT, height=180, showlegend=False,
-                                   yaxis=dict(showgrid=True, gridcolor="#F3F4F6", title="만원"),
-                                   xaxis=dict(showgrid=False))
-                st.plotly_chart(fig2, use_container_width=True)
+    st.markdown("---")
 
-                # 주차별 수치 테이블
-                df_wk = pd.DataFrame({
-                    "주차": wk_lbls,
-                    "매출": [fmt_won(wk_data.get(w, 0))+"원" for w in wks],
-                })
-                st.dataframe(df_wk, use_container_width=True, hide_index=True)
-            else:
-                st.caption("데이터 없음")
+    # ── 이번주 / 최근 주차 요약 ─────────────────────────
+    section_header("주차별 매출 요약")
+    wk_labels = D.get("weekLabels", {})
+    wk_count  = int(D.get("weekCount", 0))
+    mkt_wk_rev = D.get("mktWkRev", {})
 
+    if wk_count and wk_labels:
+        wks  = [str(w) for w in range(1, wk_count + 1)]
+        lbls = [wk_labels.get(w, f"{w}주차") for w in wks]
+        totals = [
+            sum(mkt_wk_rev.get(m, {}).get(w, 0) or 0 for m in markets)
+            for w in wks
+        ]
+        fig2 = go.Figure()
+        colors_w = [PRIMARY_COLOR] * (len(wks) - 1) + ["#F97316"]
+        fig2.add_bar(
+            x=lbls, y=[t / 10000 for t in totals],
+            marker_color=colors_w, marker_line_width=0,
+            text=[f"{t/10000:,.0f}만" for t in totals],
+            textposition="outside",
+            hovertemplate="%{x}<br>%{y:,.0f}만원<extra></extra>",
+        )
+        fig2.update_layout(
+            **CHART_LAYOUT, height=240, showlegend=False,
+            yaxis=dict(showgrid=True, gridcolor="#F3F4F6", title="만원"),
+            xaxis=dict(showgrid=False),
+            title=dict(text=f"{report_month}월 주차별 전체 매출", font=dict(size=14), x=0.01),
+        )
+        st.plotly_chart(fig2, use_container_width=True)
 
-# ══════════════════════════════════════════════════════
-#  ② 매출 추이 탭
-# ══════════════════════════════════════════════════════
-def tab_trend(D, month):
-    markets    = D.get("markets", [])
-    mkt_colors = D.get("mktColors", {})
+        # 현재 주차 KPI
+        last_w    = wks[-1]
+        last_rev  = sum(mkt_wk_rev.get(m, {}).get(last_w, 0) or 0 for m in markets)
+        prev_w    = wks[-2] if len(wks) >= 2 else None
+        prev_rev  = sum(mkt_wk_rev.get(m, {}).get(prev_w, 0) or 0 for m in markets) if prev_w else 0
+        wow       = (last_rev - prev_rev) / prev_rev if prev_rev else None
 
-    c1, c2 = st.columns(2)
-    with c1:
-        view   = st.radio("기준", ["주문일자","판매일자"], horizontal=True, key="rv_view")
-    with c2:
-        metric = st.radio("지표",  ["매출","수량"],       horizontal=True, key="rv_metric")
+        st.markdown(f"""
+        <div class="kpi-card" style="max-width:320px">
+          <div class="kpi-label">최근 주차 ({wk_labels.get(last_w, "")})</div>
+          <div class="kpi-value">{fmt_won(last_rev)}</div>
+          <div class="kpi-sub">전주 대비 {growth_tag(wow)}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        no_data("주차 데이터가 없습니다.")
 
-    use_c = (view == "주문일자")
-    raw   = D.get(("mktDayRevChart" if use_c else "mktDayRev") if metric=="매출"
-                  else ("mktDayQtyChart" if use_c else "mktDayQty"), {})
-
-    all_d  = sorted({d for m in markets for d in raw.get(m,{})})
-    f_dates= filter_dates(all_d, month)
-    if not f_dates:
-        st.info("선택한 기간에 데이터가 없습니다."); return
-
-    sel = st.multiselect("마켓 선택", markets, default=markets, key="rv_mkts")
-    if not sel: sel = markets
-
-    div    = 10000 if metric=="매출" else 1
-    y_unit = "만원"  if metric=="매출" else "개"
-
-    fig = go.Figure()
-    for m in sel:
-        vals = raw.get(m, {})
-        y    = [vals.get(d,0)/div for d in f_dates]
-        col  = mkt_colors.get(m, "#9CA3AF")
-        fig.add_scatter(x=f_dates, y=y, name=m, mode="lines+markers",
-                        line=dict(color=col, width=2), marker=dict(size=3),
-                        hovertemplate=f"{m}<br>%{{x}}<br>%{{y:,.0f}}{y_unit}<extra></extra>")
-        ty = linear_trend(y)
-        fig.add_scatter(x=f_dates, y=ty, mode="lines", showlegend=False,
-                        line=dict(color=col, width=1, dash="dot"), hoverinfo="skip")
-    fig.update_layout(**PLT, height=380,
-                      yaxis=dict(showgrid=True, gridcolor="#F3F4F6", title=y_unit),
-                      xaxis=dict(showgrid=False, tickangle=-45))
-    st.plotly_chart(fig, use_container_width=True)
-
-    # ── 마켓별 기간 합계 요약 (드릴다운) ─────────────────
-    with st.expander("마켓별 기간 합계 보기"):
-        rows = []
-        for m in sel:
-            vals = raw.get(m, {})
-            total = sum(vals.get(d,0) for d in f_dates)
-            rows.append({"마켓": m,
-                         "합계": fmt_won(total)+"원" if metric=="매출" else fmt_qty(total)})
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
+    # ── TOP3 모델 (이번달) ───────────────────────────────
+    st.markdown("---")
+    section_header(f"{report_month}월 TOP3 모델")
+    top3_model = D.get("top3ModelMonth", {}).get(cur_m, [])
+    if top3_model:
+        show_top3_cards(top3_model, col_name="model")
+    else:
+        no_data("TOP3 모델 데이터가 없습니다.")
 
 # ══════════════════════════════════════════════════════
-#  ③ 세그먼트 추이 탭
+#  TAB 2: 마켓별 분석
 # ══════════════════════════════════════════════════════
-def tab_segment(D, month):
-    cats       = D.get("categories", [])
+def tab_market(D):
+    markets       = D.get("markets", [])
+    mkt_colors    = D.get("mktColors", {})
+    data_months   = D.get("dataMonths", [])
+    report_month  = D.get("reportMonth", 4)
+    report_year   = D.get("reportYear", 2026)
+    cur_m         = f"{report_year}-{report_month:02d}"
+    wk_labels     = D.get("weekLabels", {})
+    wk_count      = int(D.get("weekCount", 0))
+
+    mkt_month_rev = D.get("mktMonthRev", {})
+    mkt_month_qty = D.get("mktMonthQty", {})
+    mkt_mom       = D.get("mktMoM", {})
+    mkt_wk_rev    = D.get("mktWkRev", {})
+    mkt_wk_qty    = D.get("mktWkQty", {})
+    mkt_wow       = D.get("mktWoW", {})
+    monthly_tgts  = D.get("monthlyTargets", {})
+    cat_share     = D.get("mktCatShareMonth", {})
+    mkt_share     = D.get("mktShareMonth", {})
+    return_rate   = D.get("returnRateMkt", {})
+    return_qty    = D.get("returnQtyMkt", {})
+    return_rev    = D.get("returnRevMkt", {})
+    return_rate_m = D.get("returnRateMktMonth", {})
+
+    # ── (1) 마켓별 MoM 추이 ────────────────────────────
+    section_header("(1) 마켓별 전월대비(MoM) 추이")
+    sel_mkt_mom = st.selectbox("마켓 선택", markets, key="mkt_mom_sel")
+    col = mkt_colors.get(sel_mkt_mom, PRIMARY_COLOR)
+    fig = make_mom_chart(
+        mkt_month_rev.get(sel_mkt_mom, {}),
+        mkt_mom.get(sel_mkt_mom, {}),
+        color=col, name=sel_mkt_mom,
+    )
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        no_data()
+
+    # ── (2) 마켓별 WoW 추이 ────────────────────────────
+    section_header("(2) 마켓별 전주대비(WoW) 추이")
+    sel_mkt_wow = st.selectbox("마켓 선택 (WoW)", markets, key="mkt_wow_sel")
+    col2 = mkt_colors.get(sel_mkt_wow, PRIMARY_COLOR)
+    fig2 = make_wow_chart(
+        mkt_wk_rev.get(sel_mkt_wow, {}),
+        mkt_wow.get(sel_mkt_wow, {}),
+        wk_labels, color=col2, name=sel_mkt_wow,
+    )
+    if fig2:
+        st.plotly_chart(fig2, use_container_width=True)
+    else:
+        no_data()
+
+    # ── (7) 마켓별 매출 비중 ─────────────────────────────
+    st.markdown("---")
+    section_header("(7) 마켓별 매출 비중")
+    sel_month_share = st.selectbox("기준 월", data_months, index=len(data_months)-1, key="mkt_share_month")
+    share_data = mkt_share.get(sel_month_share, {})
+    if share_data:
+        labels = list(share_data.keys())
+        values = [share_data[k] * 100 for k in labels]
+        colors_pie = [mkt_colors.get(l, "#9CA3AF") for l in labels]
+        fig3 = go.Figure(go.Pie(
+            labels=labels, values=values,
+            hole=0.4, marker_colors=colors_pie,
+            textinfo="label+percent",
+            hovertemplate="%{label}<br>비중: %{value:.1f}%<extra></extra>",
+        ))
+        fig3.update_layout(
+            **CHART_LAYOUT, height=320,
+            title=dict(text=f"{sel_month_share} 마켓 비중", font=dict(size=14), x=0.01),
+        )
+        st.plotly_chart(fig3, use_container_width=True)
+    else:
+        no_data()
+
+    # ── (9) 마켓별 세그먼트 비중 (스택 바) ──────────────
+    st.markdown("---")
+    section_header("(9) 마켓별 세그먼트 비중")
+    sel_seg_month = st.selectbox("기준 월", data_months, index=len(data_months)-1, key="mkt_seg_month")
+    seg_share_data = D.get("mktCatShareMonth", {}).get(sel_seg_month, {})
+    cats      = D.get("categories", [])
     cat_colors = D.get("catColors", {})
 
+    if seg_share_data and cats:
+        fig4 = go.Figure()
+        for cat in cats:
+            vals = [seg_share_data.get(m, {}).get(cat, 0) * 100 for m in markets]
+            fig4.add_bar(
+                name=cat, x=markets, y=vals,
+                marker_color=cat_colors.get(cat, "#9CA3AF"),
+                hovertemplate=f"{cat}<br>%{{x}}<br>%{{y:.1f}}%<extra></extra>",
+            )
+        fig4.update_layout(
+            **CHART_LAYOUT, height=320,
+            barmode="stack",
+            yaxis=dict(title="비중(%)", showgrid=True, gridcolor="#F3F4F6"),
+            xaxis=dict(showgrid=False),
+            title=dict(text=f"{sel_seg_month} 마켓별 세그먼트 비중", font=dict(size=14), x=0.01),
+        )
+        st.plotly_chart(fig4, use_container_width=True)
+    else:
+        no_data()
+
+    # ── (12) 마켓별 매출 MoM 비교 ──────────────────────
+    st.markdown("---")
+    section_header("(12) 마켓별 월별 매출 비교")
+    sel_mkts_cmp = st.multiselect("비교할 마켓 선택", markets, default=markets[:3], key="mkt_cmp_sel")
+    if sel_mkts_cmp:
+        fig5 = go.Figure()
+        for m in sel_mkts_cmp:
+            m_data = mkt_month_rev.get(m, {})
+            months_s = sorted(m_data.keys())
+            revs_s   = [m_data[mo] / 10000 for mo in months_s]
+            fig5.add_scatter(
+                x=months_s, y=revs_s, name=m, mode="lines+markers",
+                line=dict(color=mkt_colors.get(m, "#9CA3AF"), width=2),
+                marker=dict(size=6),
+                hovertemplate=f"{m}<br>%{{x}}<br>%{{y:,.0f}}만원<extra></extra>",
+            )
+        fig5.update_layout(
+            **CHART_LAYOUT, height=320,
+            yaxis=dict(title="매출(만원)", showgrid=True, gridcolor="#F3F4F6"),
+            xaxis=dict(showgrid=False),
+            title=dict(text="마켓별 월별 매출 추이", font=dict(size=14), x=0.01),
+        )
+        st.plotly_chart(fig5, use_container_width=True)
+    else:
+        no_data("마켓을 선택해주세요.")
+
+    # ── (15) 마켓별 반품율 ───────────────────────────────
+    st.markdown("---")
+    section_header("(15) 마켓별 반품율")
+    if return_rate:
+        r_markets = list(return_rate.keys())
+        r_rates   = [return_rate[m] * 100 for m in r_markets]
+        r_colors  = [mkt_colors.get(m, "#9CA3AF") for m in r_markets]
+        fig6 = go.Figure()
+        fig6.add_bar(
+            x=r_markets, y=r_rates,
+            marker_color=r_colors, marker_line_width=0,
+            text=[f"{r:.1f}%" for r in r_rates],
+            textposition="outside",
+            hovertemplate="%{x}<br>반품율: %{y:.1f}%<extra></extra>",
+        )
+        fig6.update_layout(
+            **CHART_LAYOUT, height=260, showlegend=False,
+            yaxis=dict(title="반품율(%)", showgrid=True, gridcolor="#F3F4F6"),
+            xaxis=dict(showgrid=False),
+            title=dict(text="마켓별 반품율", font=dict(size=14), x=0.01),
+        )
+        st.plotly_chart(fig6, use_container_width=True)
+
+        # 반품 상세 테이블
+        rows_r = []
+        for m in r_markets:
+            rows_r.append({
+                "마켓": m,
+                "반품율": f"{return_rate.get(m,0)*100:.1f}%",
+                "반품수량": fmt_qty(return_qty.get(m, 0)),
+                "반품금액": fmt_won(return_rev.get(m, 0)),
+            })
+        st.dataframe(pd.DataFrame(rows_r), use_container_width=True, hide_index=True)
+    else:
+        no_data()
+
+# ══════════════════════════════════════════════════════
+#  TAB 3: 모델별 분석
+# ══════════════════════════════════════════════════════
+def tab_model(D):
+    model_list     = D.get("modelList", [])
+    data_months    = D.get("dataMonths", [])
+    report_month   = D.get("reportMonth", 4)
+    report_year    = D.get("reportYear", 2026)
+    cur_m          = f"{report_year}-{report_month:02d}"
+    wk_labels      = D.get("weekLabels", {})
+    wk_count       = int(D.get("weekCount", 0))
+
+    model_month_rev = D.get("modelMonthRev", {})
+    model_month_qty = D.get("modelMonthQty", {})
+    model_mom       = D.get("modelMoM", {})
+    model_wk_rev    = D.get("modelWkRev", {})
+    model_wk_qty    = D.get("modelWkQty", {})
+    model_wow       = D.get("modelWoW", {})
+    model_mkt_growth= D.get("modelMktGrowth", {})
+    growth_model_m  = D.get("growthModelMonth", {})
+    decline_model_m = D.get("declineModelMonth", {})
+    growth_model_w  = D.get("growthModelWeek", {})
+    decline_model_w = D.get("declineModelWeek", {})
+    top3_model_m    = D.get("top3ModelMonth", {})
+    top3_model_w    = D.get("top3ModelWeek", {})
+
+    if not model_list:
+        no_data("모델 목록이 없습니다."); return
+
+    # ── (1) 모델별 MoM 추이 ────────────────────────────
+    section_header("(1) 모델별 전월대비(MoM) 추이")
+    sel_model_mom = st.selectbox("모델 선택", model_list, key="mdl_mom_sel")
+    fig = make_mom_chart(
+        model_month_rev.get(sel_model_mom, {}),
+        model_mom.get(sel_model_mom, {}),
+        color=PRIMARY_COLOR, name=sel_model_mom,
+    )
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        no_data()
+
+    # ── (2) 모델별 WoW 추이 ────────────────────────────
+    section_header("(2) 모델별 전주대비(WoW) 추이")
+    sel_model_wow = st.selectbox("모델 선택 (WoW)", model_list, key="mdl_wow_sel")
+    fig2 = make_wow_chart(
+        model_wk_rev.get(sel_model_wow, {}),
+        model_wow.get(sel_model_wow, {}),
+        wk_labels, color="#7C3AED", name=sel_model_wow,
+    )
+    if fig2:
+        st.plotly_chart(fig2, use_container_width=True)
+    else:
+        no_data()
+
+    # ── (3) 주별/월별 TOP3 모델 ────────────────────────
+    st.markdown("---")
+    section_header("(3) TOP3 모델")
     c1, c2 = st.columns(2)
     with c1:
-        view   = st.radio("기준", ["주문일자","판매일자"], horizontal=True, key="sg_view")
+        st.caption("월별 TOP3")
+        sel_top3_month = st.selectbox("기준 월", data_months, index=len(data_months)-1, key="mdl_top3_month")
+        top3_m = top3_model_m.get(sel_top3_month, [])
+        if top3_m:
+            show_top3_cards(top3_m, col_name="model")
+        else:
+            no_data()
     with c2:
-        metric = st.radio("지표",  ["매출","수량"],       horizontal=True, key="sg_metric")
+        st.caption("주별 TOP3")
+        wk_opts = [wk_labels.get(str(w), f"{w}주차") for w in range(1, wk_count+1)] if wk_count else []
+        if wk_opts:
+            sel_top3_wk_lbl = st.selectbox("기준 주차", wk_opts, key="mdl_top3_wk")
+            sel_top3_wk = str(wk_opts.index(sel_top3_wk_lbl) + 1) if sel_top3_wk_lbl in wk_opts else "1"
+            top3_w = top3_model_w.get(sel_top3_wk, [])
+            if top3_w:
+                show_top3_cards(top3_w, col_name="model")
+            else:
+                no_data()
+        else:
+            no_data("주차 데이터가 없습니다.")
 
-    use_c = (view == "주문일자")
-    raw   = D.get(("catDayRevChart" if use_c else "catDayRev") if metric=="매출"
-                  else ("catDayQtyChart" if use_c else "catDayQty"), {})
+    # ── (5) 성장 모델 ───────────────────────────────────
+    st.markdown("---")
+    section_header("(5) 전월 대비 성장 모델")
+    growth_data = growth_model_m.get(cur_m, [])
+    if growth_data:
+        sorted_growth = sorted(growth_data, key=lambda x: x.get("growthRate", 0), reverse=True)
+        show_growth_list(sorted_growth, "model")
+    else:
+        no_data()
 
-    all_d  = sorted({d for c in cats for d in raw.get(c,{})})
-    f_dates= filter_dates(all_d, month)
-    if not f_dates:
-        st.info("선택한 기간에 데이터가 없습니다."); return
+    # ── (6) 하락 모델 ───────────────────────────────────
+    section_header("(6) 전월 대비 하락 모델")
+    decline_data = decline_model_m.get(cur_m, [])
+    if decline_data:
+        sorted_decline = sorted(decline_data, key=lambda x: x.get("growthRate", 0))
+        show_growth_list(sorted_decline, "model")
+    else:
+        no_data()
 
-    sel = st.multiselect("세그먼트 선택", cats, default=cats, key="sg_cats")
-    if not sel: sel = cats
+    # ── (10) 모델별 성장/하락 마켓 ─────────────────────
+    st.markdown("---")
+    section_header("(10) 전월대비 마켓 성장/하락 (모델별)")
+    sel_model_mkt = st.selectbox("모델 선택", model_list, key="mdl_mkt_sel")
+    mkt_data = model_mkt_growth.get(sel_model_mkt, {})
+    c1, c2 = st.columns(2)
+    with c1:
+        st.caption("성장 마켓 BEST3")
+        best3 = mkt_data.get("best3", [])
+        if best3:
+            show_growth_list(best3, "market")
+        else:
+            no_data()
+    with c2:
+        st.caption("하락 마켓 WORST3")
+        worst3 = mkt_data.get("worst3", [])
+        if worst3:
+            show_growth_list(worst3, "market")
+        else:
+            no_data()
 
-    div    = 10000 if metric=="매출" else 1
-    y_unit = "만원"  if metric=="매출" else "개"
+    # ── (13) 멀티 모델 MoM 비교 ─────────────────────────
+    st.markdown("---")
+    section_header("(13) 모델별 월별 매출 비교")
+    sel_models_cmp = st.multiselect(
+        "비교할 모델 선택", model_list,
+        default=model_list[:3] if len(model_list) >= 3 else model_list,
+        key="mdl_cmp_sel",
+    )
+    if sel_models_cmp:
+        fig5 = go.Figure()
+        palette = ["#1D4ED8","#7C3AED","#059669","#DC2626","#D97706","#0891B2","#9D174D","#92400E"]
+        for i, mdl in enumerate(sel_models_cmp):
+            m_data  = model_month_rev.get(mdl, {})
+            months_s= sorted(m_data.keys())
+            revs_s  = [m_data[mo] / 10000 for mo in months_s]
+            fig5.add_scatter(
+                x=months_s, y=revs_s, name=mdl, mode="lines+markers",
+                line=dict(color=palette[i % len(palette)], width=2),
+                marker=dict(size=6),
+                hovertemplate=f"{mdl}<br>%{{x}}<br>%{{y:,.0f}}만원<extra></extra>",
+            )
+        fig5.update_layout(
+            **CHART_LAYOUT, height=320,
+            yaxis=dict(title="매출(만원)", showgrid=True, gridcolor="#F3F4F6"),
+            xaxis=dict(showgrid=False),
+            title=dict(text="모델별 월별 매출 비교", font=dict(size=14), x=0.01),
+        )
+        st.plotly_chart(fig5, use_container_width=True)
+    else:
+        no_data("모델을 선택해주세요.")
+
+# ══════════════════════════════════════════════════════
+#  TAB 4: 세그먼트별 분석
+# ══════════════════════════════════════════════════════
+def tab_segment(D):
+    cats        = D.get("categories", [])
+    cat_colors  = D.get("catColors", {})
+    data_months = D.get("dataMonths", [])
+    report_month= D.get("reportMonth", 4)
+    report_year = D.get("reportYear", 2026)
+    cur_m       = f"{report_year}-{report_month:02d}"
+    wk_labels   = D.get("weekLabels", {})
+    wk_count    = int(D.get("weekCount", 0))
+    markets     = D.get("markets", [])
+    mkt_colors  = D.get("mktColors", {})
+
+    cat_month_rev = D.get("catMonthRev", {})
+    cat_month_qty = D.get("catMonthQty", {})
+    cat_mom       = D.get("catMoM", {})
+    cat_wk_rev    = D.get("catWkRev", {})
+    cat_wk_qty    = D.get("catWkQty", {})
+    cat_wow       = D.get("catWoW", {})
+    growth_cat_m  = D.get("growthCatMonth", {})
+    decline_cat_m = D.get("declineCatMonth", {})
+    top3_cat_m    = D.get("top3CatMonth", {})
+    top3_cat_w    = D.get("top3CatWeek", {})
+    cat_share_m   = D.get("catShareMonth", {})
+    mkt_cat_share = D.get("mktCatShareMonth", {})
+
+    if not cats:
+        no_data("세그먼트 데이터가 없습니다."); return
+
+    # ── (1) 세그먼트별 MoM 추이 ────────────────────────
+    section_header("(1) 세그먼트별 전월대비(MoM) 추이")
+    sel_cat_mom = st.selectbox("세그먼트 선택", cats, key="seg_mom_sel")
+    col = cat_colors.get(sel_cat_mom, PRIMARY_COLOR)
+    fig = make_mom_chart(
+        cat_month_rev.get(sel_cat_mom, {}),
+        cat_mom.get(sel_cat_mom, {}),
+        color=col, name=sel_cat_mom,
+    )
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        no_data()
+
+    # ── (2) 세그먼트별 WoW 추이 ────────────────────────
+    section_header("(2) 세그먼트별 전주대비(WoW) 추이")
+    sel_cat_wow = st.selectbox("세그먼트 선택 (WoW)", cats, key="seg_wow_sel")
+    col2 = cat_colors.get(sel_cat_wow, PRIMARY_COLOR)
+    fig2 = make_wow_chart(
+        cat_wk_rev.get(sel_cat_wow, {}),
+        cat_wow.get(sel_cat_wow, {}),
+        wk_labels, color=col2, name=sel_cat_wow,
+    )
+    if fig2:
+        st.plotly_chart(fig2, use_container_width=True)
+    else:
+        no_data()
+
+    # ── (3) TOP3 세그먼트 ───────────────────────────────
+    st.markdown("---")
+    section_header("(3) TOP3 세그먼트")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.caption("월별 TOP3")
+        sel_top3_month = st.selectbox("기준 월", data_months, index=len(data_months)-1, key="seg_top3_month")
+        top3_m = top3_cat_m.get(sel_top3_month, [])
+        if top3_m:
+            show_top3_cards(top3_m, col_name="cat")
+        else:
+            no_data()
+    with c2:
+        st.caption("주별 TOP3")
+        wk_opts = [wk_labels.get(str(w), f"{w}주차") for w in range(1, wk_count+1)] if wk_count else []
+        if wk_opts:
+            sel_top3_wk_lbl = st.selectbox("기준 주차", wk_opts, key="seg_top3_wk")
+            sel_top3_wk = str(wk_opts.index(sel_top3_wk_lbl) + 1)
+            top3_w = top3_cat_w.get(sel_top3_wk, [])
+            if top3_w:
+                show_top3_cards(top3_w, col_name="cat")
+            else:
+                no_data()
+        else:
+            no_data()
+
+    # ── (5) 성장 세그먼트 ──────────────────────────────
+    st.markdown("---")
+    section_header("(5) 전월 대비 성장 세그먼트")
+    growth_data = growth_cat_m.get(cur_m, [])
+    if growth_data:
+        show_growth_list(sorted(growth_data, key=lambda x: x.get("growthRate",0), reverse=True), "cat")
+    else:
+        no_data()
+
+    # ── (6) 하락 세그먼트 ──────────────────────────────
+    section_header("(6) 전월 대비 하락 세그먼트")
+    decline_data = decline_cat_m.get(cur_m, [])
+    if decline_data:
+        show_growth_list(sorted(decline_data, key=lambda x: x.get("growthRate",0)), "cat")
+    else:
+        no_data()
+
+    # ── 카테고리별 매출 비중 ───────────────────────────
+    st.markdown("---")
+    section_header("카테고리별 매출 비중")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.caption("파이 차트 (월별)")
+        sel_share_month = st.selectbox("기준 월", data_months, index=len(data_months)-1, key="seg_share_month")
+        share_data = cat_share_m.get(sel_share_month, {})
+        if share_data:
+            labels = list(share_data.keys())
+            values = [share_data[k] * 100 for k in labels]
+            colors_pie = [cat_colors.get(l, "#9CA3AF") for l in labels]
+            fig3 = go.Figure(go.Pie(
+                labels=labels, values=values,
+                hole=0.4, marker_colors=colors_pie,
+                textinfo="label+percent",
+                hovertemplate="%{label}: %{value:.1f}%<extra></extra>",
+            ))
+            fig3.update_layout(
+                **CHART_LAYOUT, height=300,
+                title=dict(text=f"{sel_share_month} 카테고리 비중", font=dict(size=13), x=0.01),
+            )
+            st.plotly_chart(fig3, use_container_width=True)
+        else:
+            no_data()
+
+    with c2:
+        st.caption("월별 스택 바")
+        if cat_month_rev and data_months:
+            fig4 = go.Figure()
+            for cat in cats:
+                vals = [cat_month_rev.get(cat, {}).get(mo, 0) or 0 for mo in data_months]
+                # 비중으로 변환
+                totals_mo = [
+                    sum(cat_month_rev.get(c, {}).get(mo, 0) or 0 for c in cats)
+                    for mo in data_months
+                ]
+                pcts = [v / t * 100 if t else 0 for v, t in zip(vals, totals_mo)]
+                fig4.add_bar(
+                    name=cat, x=data_months, y=pcts,
+                    marker_color=cat_colors.get(cat, "#9CA3AF"),
+                    hovertemplate=f"{cat}<br>%{{x}}<br>%{{y:.1f}}%<extra></extra>",
+                )
+            fig4.update_layout(
+                **CHART_LAYOUT, height=300,
+                barmode="stack",
+                yaxis=dict(title="비중(%)", showgrid=True, gridcolor="#F3F4F6"),
+                xaxis=dict(showgrid=False),
+                title=dict(text="월별 세그먼트 비중", font=dict(size=13), x=0.01),
+            )
+            st.plotly_chart(fig4, use_container_width=True)
+        else:
+            no_data()
+
+    # ── (9) 마켓별 세그먼트 비중 ─────────────────────────
+    st.markdown("---")
+    section_header("(9) 마켓 선택 → 세그먼트 비중")
+    sel_mkt_seg = st.selectbox("마켓 선택", markets, key="seg_mkt_sel")
+    sel_seg_month2 = st.selectbox("기준 월", data_months, index=len(data_months)-1, key="seg_mkt_month")
+    seg_mkt_data = mkt_cat_share.get(sel_seg_month2, {}).get(sel_mkt_seg, {})
+    if seg_mkt_data:
+        labels = list(seg_mkt_data.keys())
+        values = [seg_mkt_data[k] * 100 for k in labels]
+        colors_pie2 = [cat_colors.get(l, "#9CA3AF") for l in labels]
+        fig5 = go.Figure(go.Pie(
+            labels=labels, values=values,
+            hole=0.35, marker_colors=colors_pie2,
+            textinfo="label+percent",
+            hovertemplate="%{label}: %{value:.1f}%<extra></extra>",
+        ))
+        fig5.update_layout(
+            **CHART_LAYOUT, height=300,
+            title=dict(text=f"{sel_mkt_seg} ({sel_seg_month2}) 세그먼트 비중", font=dict(size=13), x=0.01),
+        )
+        st.plotly_chart(fig5, use_container_width=True)
+    else:
+        no_data()
+
+    # ── (14) 세그먼트별 MoM 비교 ─────────────────────────
+    st.markdown("---")
+    section_header("(14) 세그먼트별 월별 매출 비교")
+    sel_cats_cmp = st.multiselect(
+        "비교할 세그먼트 선택", cats,
+        default=cats[:3] if len(cats) >= 3 else cats,
+        key="seg_cmp_sel",
+    )
+    if sel_cats_cmp:
+        fig6 = go.Figure()
+        for cat in sel_cats_cmp:
+            m_data  = cat_month_rev.get(cat, {})
+            months_s= sorted(m_data.keys())
+            revs_s  = [m_data[mo] / 10000 for mo in months_s]
+            fig6.add_scatter(
+                x=months_s, y=revs_s, name=cat, mode="lines+markers",
+                line=dict(color=cat_colors.get(cat, "#9CA3AF"), width=2),
+                marker=dict(size=6),
+                hovertemplate=f"{cat}<br>%{{x}}<br>%{{y:,.0f}}만원<extra></extra>",
+            )
+        fig6.update_layout(
+            **CHART_LAYOUT, height=320,
+            yaxis=dict(title="매출(만원)", showgrid=True, gridcolor="#F3F4F6"),
+            xaxis=dict(showgrid=False),
+            title=dict(text="세그먼트별 월별 매출 비교", font=dict(size=14), x=0.01),
+        )
+        st.plotly_chart(fig6, use_container_width=True)
+    else:
+        no_data("세그먼트를 선택해주세요.")
+
+# ══════════════════════════════════════════════════════
+#  TAB 5: 추이 분석
+# ══════════════════════════════════════════════════════
+def tab_trend(D):
+    markets     = D.get("markets", [])
+    cats        = D.get("categories", [])
+    model_list  = D.get("modelList", [])
+    mkt_colors  = D.get("mktColors", {})
+    cat_colors  = D.get("catColors", {})
+    data_months = D.get("dataMonths", [])
+
+    mkt_day_rev = D.get("mktDayRev", {})
+    mkt_day_qty = D.get("mktDayQty", {})
+    cat_day_rev = D.get("catDayRev", {})
+    cat_day_qty = D.get("catDayQty", {})
+
+    section_header("일별 매출 추이 분석")
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        view_type = st.radio("분류 기준", ["마켓별", "세그먼트별"], horizontal=True, key="tr_view")
+    with c2:
+        metric = st.radio("지표", ["매출", "수량"], horizontal=True, key="tr_metric")
+    with c3:
+        sel_month_tr = st.selectbox("기준 월", ["전체"] + data_months, key="tr_month")
+
+    use_market = (view_type == "마켓별")
+    use_rev    = (metric == "매출")
+
+    if use_market:
+        raw    = mkt_day_rev if use_rev else mkt_day_qty
+        items  = markets
+        colors = mkt_colors
+        lbl    = "마켓"
+    else:
+        raw    = cat_day_rev if use_rev else cat_day_qty
+        items  = cats
+        colors = cat_colors
+        lbl    = "세그먼트"
+
+    all_dates = sorted({d for item in items for d in raw.get(item, {})})
+    if sel_month_tr != "전체":
+        all_dates = [d for d in all_dates if d.startswith(sel_month_tr)]
+
+    if not all_dates:
+        no_data("선택한 기간에 데이터가 없습니다."); return
+
+    sel_items = st.multiselect(f"{lbl} 선택", items, default=items, key="tr_items")
+    show_trend = st.checkbox("추세선 표시", value=False, key="tr_trend")
+
+    if not sel_items:
+        no_data(f"{lbl}를 선택해주세요."); return
+
+    div    = 10000 if use_rev else 1
+    y_unit = "만원" if use_rev else "개"
 
     fig = go.Figure()
-    for cat in sel:
-        vals = raw.get(cat, {})
-        y    = [vals.get(d,0)/div for d in f_dates]
-        col  = cat_colors.get(cat, "#9CA3AF")
-        fig.add_scatter(x=f_dates, y=y, name=cat, mode="lines+markers",
-                        line=dict(color=col, width=2), marker=dict(size=3),
-                        hovertemplate=f"{cat}<br>%{{x}}<br>%{{y:,.0f}}{y_unit}<extra></extra>")
-        ty = linear_trend(y)
-        fig.add_scatter(x=f_dates, y=ty, mode="lines", showlegend=False,
-                        line=dict(color=col, width=1, dash="dot"), hoverinfo="skip")
-    fig.update_layout(**PLT, height=380,
-                      yaxis=dict(showgrid=True, gridcolor="#F3F4F6", title=y_unit),
-                      xaxis=dict(showgrid=False, tickangle=-45))
+    for item in sel_items:
+        vals = raw.get(item, {})
+        y    = [vals.get(d, 0) / div for d in all_dates]
+        col  = colors.get(item, "#9CA3AF")
+        fig.add_scatter(
+            x=all_dates, y=y, name=item, mode="lines+markers",
+            line=dict(color=col, width=2), marker=dict(size=3),
+            hovertemplate=f"{item}<br>%{{x}}<br>%{{y:,.1f}}{y_unit}<extra></extra>",
+        )
+        if show_trend:
+            ty = linear_trend(y)
+            fig.add_scatter(
+                x=all_dates, y=ty, mode="lines", showlegend=False,
+                line=dict(color=col, width=1, dash="dot"), hoverinfo="skip",
+            )
+    fig.update_layout(
+        **CHART_LAYOUT, height=400,
+        yaxis=dict(showgrid=True, gridcolor="#F3F4F6", title=y_unit),
+        xaxis=dict(showgrid=False, tickangle=-45),
+        title=dict(text=f"일별 {view_type} {metric} 추이", font=dict(size=14), x=0.01),
+    )
     st.plotly_chart(fig, use_container_width=True)
 
-    # ── 세그먼트별 합계 (드릴다운) ───────────────────────
-    with st.expander("세그먼트별 기간 합계 보기"):
+    # 기간 합계 요약
+    with st.expander("기간 합계 보기"):
         rows = []
-        for cat in sel:
-            vals  = raw.get(cat, {})
-            total = sum(vals.get(d,0) for d in f_dates)
-            rows.append({"세그먼트": cat,
-                         "합계": fmt_won(total)+"원" if metric=="매출" else fmt_qty(total)})
+        for item in sel_items:
+            vals  = raw.get(item, {})
+            total = sum(vals.get(d, 0) for d in all_dates)
+            rows.append({
+                lbl: item,
+                "합계": fmt_won(total) if use_rev else fmt_qty(total),
+            })
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-
 # ══════════════════════════════════════════════════════
-#  ④ 모델별 판매 탭
+#  TAB 6: 성장/하락 분석
 # ══════════════════════════════════════════════════════
-def tab_models(D, month):
-    models    = D.get("models", [])
-    skus      = D.get("skus", [])
-    markets   = D.get("markets", [])
-    cats      = D.get("categories", [])
-    wk_lbl    = D.get("weekLabels", {})
-    wk_count  = int(D.get("weekCount", 5))
-    dates_all = D.get("dates", [])
-    qty_tgts  = D.get("modelQtyTargets", {})
-    mkt_colors= D.get("mktColors", {})
+def tab_growth(D):
+    data_months   = D.get("dataMonths", [])
+    report_month  = D.get("reportMonth", 4)
+    report_year   = D.get("reportYear", 2026)
+    cur_m         = f"{report_year}-{report_month:02d}"
+    wk_labels     = D.get("weekLabels", {})
+    wk_count      = int(D.get("weekCount", 0))
+    markets       = D.get("markets", [])
+    mkt_colors    = D.get("mktColors", {})
+    cats          = D.get("categories", [])
+    cat_colors    = D.get("catColors", {})
 
-    # ── 필터 (2행으로 나눔 — 모바일 대응) ──────────────
-    r1c1, r1c2 = st.columns(2)
-    with r1c1:
-        mode = st.radio("단위", ["모델명별","SKU별"], horizontal=True, key="tb_mode")
-    with r1c2:
-        view = st.radio("기간", ["주별","일별"],     horizontal=True, key="tb_view")
+    growth_model_m  = D.get("growthModelMonth", {})
+    decline_model_m = D.get("declineModelMonth", {})
+    growth_model_w  = D.get("growthModelWeek", {})
+    decline_model_w = D.get("declineModelWeek", {})
+    growth_cat_m    = D.get("growthCatMonth", {})
+    decline_cat_m   = D.get("declineCatMonth", {})
+    mkt_mom         = D.get("mktMoM", {})
+    mkt_month_rev   = D.get("mktMonthRev", {})
 
-    r2c1, r2c2 = st.columns(2)
-    with r2c1:
-        sel_mkt = st.selectbox("마켓", ["전체"]+markets, key="tb_mkt")
-    with r2c2:
-        sel_cat = st.selectbox("세그먼트", ["전체"]+cats, key="tb_cat")
+    # ── 전월 대비 성장/하락 TOP10 ─────────────────────
+    section_header("전월 대비 성장/하락 분석")
+    tab1, tab2 = st.tabs(["모델", "세그먼트"])
 
-    search = st.text_input("", placeholder="🔍 모델명 / SKU 검색",
-                           key="tb_search", label_visibility="collapsed")
-
-    source = models if mode == "모델명별" else skus
-
-    # ── 기간 컬럼 ────────────────────────────────────
-    if view == "주별":
-        p_keys = [str(w) for w in range(1, wk_count+1)]
-        p_lbls = {k: wk_lbl.get(k, f"{k}주차") for k in p_keys}
-    else:
-        p_keys = filter_dates(dates_all, month)
-        p_lbls = {d: d[5:] for d in p_keys}
-
-    # ── 데이터 빌드 ──────────────────────────────────
-    rows = []
-    for m in source:
-        if sel_cat != "전체" and m.get("cat") != sel_cat: continue
-        label = m.get("grp", m.get("sku",""))
-        if search and search.lower() not in (label+m.get("sku","")).lower(): continue
-
-        if sel_mkt == "전체":
-            if view == "주별":
-                p_vals = {k: m.get("totalWk",{}).get(k,0) for k in p_keys}
+    with tab1:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.caption(f"성장 TOP10 ({cur_m})")
+            gdata = sorted(
+                growth_model_m.get(cur_m, []),
+                key=lambda x: x.get("growthRate", 0), reverse=True
+            )[:10]
+            if gdata:
+                rows = [{"모델": i.get("model",""), "전기": fmt_won(i.get("prevRev",0)),
+                         "현기": fmt_won(i.get("currRev",0)), "증감율": fmt_pct(i.get("growthRate"))}
+                        for i in gdata]
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
             else:
-                day_all = {}
-                for mk_d in m.get("dayData",{}).values():
-                    for d,q in mk_d.items(): day_all[d] = day_all.get(d,0)+q
-                p_vals = {k: day_all.get(k,0) for k in p_keys}
-            total = sum(p_vals.values())
-        else:
-            if view == "주별":
-                wk_d = m.get("mktWk",{}).get(sel_mkt,{})
-                p_vals = {k: wk_d.get(k,0) for k in p_keys}
+                no_data()
+        with c2:
+            st.caption(f"하락 TOP10 ({cur_m})")
+            ddata = sorted(
+                decline_model_m.get(cur_m, []),
+                key=lambda x: x.get("growthRate", 0)
+            )[:10]
+            if ddata:
+                rows = [{"모델": i.get("model",""), "전기": fmt_won(i.get("prevRev",0)),
+                         "현기": fmt_won(i.get("currRev",0)), "증감율": fmt_pct(i.get("growthRate"))}
+                        for i in ddata]
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
             else:
-                mk_d = m.get("dayData",{}).get(sel_mkt,{})
-                p_vals = {k: mk_d.get(k,0) for k in p_keys}
-            total = sum(p_vals.values())
+                no_data()
 
-        if total == 0: continue
-
-        sku_base = m.get("skuBase") or m.get("sku","")
-        tgt_key  = f"{sku_base}*" if qty_tgts.get(f"{sku_base}*") else sku_base
-        m_key    = str(month) if month else str(D.get("reportMonth",0))
-        qty_tgt  = (qty_tgts.get(tgt_key) or {}).get(m_key, 0)
-
-        row = {
-            "_sku": m.get("sku",""),
-            "_dayData": m.get("dayData",{}),
-            "_mktWk":   m.get("mktWk",{}),
-            "카테고리": m.get("cat",""),
-            "모델명":   label,
-            "합계(개)": total,
-            "목표(개)": qty_tgt or None,
-            "달성률":   f"{total/qty_tgt*100:.0f}%" if qty_tgt else "-",
-        }
-        for k in p_keys:
-            row[p_lbls[k]] = p_vals.get(k,0) or None
-        rows.append(row)
-
-    if not rows:
-        st.info("조건에 맞는 데이터가 없습니다."); return
-
-    # 내부용 컬럼 분리
-    detail_map = {r["모델명"]: r for r in rows}
-    display_rows = [{k:v for k,v in r.items() if not k.startswith("_")} for r in rows]
-
-    df = pd.DataFrame(display_rows).sort_values("합계(개)", ascending=False).reset_index(drop=True)
-
-    p_cfg = {p_lbls[k]: st.column_config.NumberColumn(p_lbls[k], format="%d", width="small")
-             for k in p_keys}
-    col_cfg = {
-        "카테고리": st.column_config.TextColumn(width="small"),
-        "모델명":   st.column_config.TextColumn(width="large"),
-        "합계(개)": st.column_config.NumberColumn("합계", format="%d", width="small"),
-        "목표(개)": st.column_config.NumberColumn("목표", format="%d", width="small"),
-        "달성률":   st.column_config.TextColumn(width="small"),
-        **p_cfg,
-    }
-    st.dataframe(df, use_container_width=True, hide_index=True,
-                 column_config=col_cfg, height=460)
-    st.caption(f"{len(df)}개 모델")
-
-    # ── 모델 드릴다운 (터치 → 마켓별 상세) ──────────────
-    st.markdown("#### 모델 상세 _(모델 선택 후 터치)_")
-    model_names = [r["모델명"] for r in rows[:50]]   # 상위 50개
-    sel_model   = st.selectbox("모델 선택", ["(선택)"] + model_names, key="tb_detail")
-
-    if sel_model != "(선택)" and sel_model in detail_map:
-        rd = detail_map[sel_model]
-        day_data = rd["_dayData"]; mkt_wk = rd["_mktWk"]
-
-        st.markdown(f"**{sel_model}** — 마켓별 상세")
-
-        # 마켓별 합계 바 차트
-        mkt_totals = {}
-        for mk in markets:
-            if view == "주별":
-                mkt_totals[mk] = sum(mkt_wk.get(mk,{}).get(k,0) for k in p_keys)
-            else:
-                mk_d = day_data.get(mk,{})
-                mkt_totals[mk] = sum(mk_d.get(k,0) for k in p_keys)
-
-        mkt_totals = {k:v for k,v in mkt_totals.items() if v}
-        if mkt_totals:
-            fig = go.Figure()
-            fig.add_bar(
-                x=list(mkt_totals.keys()),
-                y=list(mkt_totals.values()),
-                marker_color=[mkt_colors.get(m,"#9CA3AF") for m in mkt_totals],
-                text=[f"{v:,}개" for v in mkt_totals.values()],
-                textposition="outside", textfont_size=11,
+    with tab2:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.caption(f"성장 세그먼트 ({cur_m})")
+            gdata2 = sorted(
+                growth_cat_m.get(cur_m, []),
+                key=lambda x: x.get("growthRate", 0), reverse=True
             )
-            fig.update_layout(**PLT, height=220, showlegend=False,
-                              yaxis=dict(showgrid=True, gridcolor="#F3F4F6", title="수량(개)"),
-                              xaxis=dict(showgrid=False))
-            st.plotly_chart(fig, use_container_width=True)
+            if gdata2:
+                rows = [{"세그먼트": i.get("cat",""), "전기": fmt_won(i.get("prevRev",0)),
+                         "현기": fmt_won(i.get("currRev",0)), "증감율": fmt_pct(i.get("growthRate"))}
+                        for i in gdata2]
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            else:
+                no_data()
+        with c2:
+            st.caption(f"하락 세그먼트 ({cur_m})")
+            ddata2 = sorted(
+                decline_cat_m.get(cur_m, []),
+                key=lambda x: x.get("growthRate", 0)
+            )
+            if ddata2:
+                rows = [{"세그먼트": i.get("cat",""), "전기": fmt_won(i.get("prevRev",0)),
+                         "현기": fmt_won(i.get("currRev",0)), "증감율": fmt_pct(i.get("growthRate"))}
+                        for i in ddata2]
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            else:
+                no_data()
 
-        # 마켓 × 주차 테이블
-        if view == "주별":
-            tbl = {"마켓": [], **{p_lbls[k]:[] for k in p_keys}}
-            for mk in markets:
-                wk_d = mkt_wk.get(mk,{})
-                if not any(wk_d.get(k,0) for k in p_keys): continue
-                tbl["마켓"].append(mk)
-                for k in p_keys: tbl[p_lbls[k]].append(wk_d.get(k,0) or None)
-            if tbl["마켓"]:
-                st.dataframe(pd.DataFrame(tbl), use_container_width=True, hide_index=True)
+    # ── 전주 대비 성장/하락 TOP10 ─────────────────────
+    st.markdown("---")
+    section_header("전주 대비 성장/하락 분석")
+    if wk_count:
+        wk_opts = [str(w) for w in range(1, wk_count + 1)]
+        wk_lbl_opts = [wk_labels.get(w, f"{w}주차") for w in wk_opts]
+        sel_wk_lbl = st.selectbox("기준 주차", wk_lbl_opts, index=len(wk_lbl_opts)-1, key="gr_wk_sel")
+        sel_wk = wk_opts[wk_lbl_opts.index(sel_wk_lbl)]
 
+        c1, c2 = st.columns(2)
+        with c1:
+            st.caption(f"성장 TOP10 ({sel_wk_lbl})")
+            gw = sorted(
+                growth_model_w.get(sel_wk, []),
+                key=lambda x: x.get("growthRate", 0), reverse=True
+            )[:10]
+            if gw:
+                rows = [{"모델": i.get("model",""), "전주": fmt_won(i.get("prevRev",0)),
+                         "이번주": fmt_won(i.get("currRev",0)), "증감율": fmt_pct(i.get("growthRate"))}
+                        for i in gw]
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            else:
+                no_data()
+        with c2:
+            st.caption(f"하락 TOP10 ({sel_wk_lbl})")
+            dw = sorted(
+                decline_model_w.get(sel_wk, []),
+                key=lambda x: x.get("growthRate", 0)
+            )[:10]
+            if dw:
+                rows = [{"모델": i.get("model",""), "전주": fmt_won(i.get("prevRev",0)),
+                         "이번주": fmt_won(i.get("currRev",0)), "증감율": fmt_pct(i.get("growthRate"))}
+                        for i in dw]
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            else:
+                no_data()
+    else:
+        no_data("주차 데이터가 없습니다.")
+
+    # ── 히트맵: 마켓 × 월별 성장율 ─────────────────────
+    st.markdown("---")
+    section_header("히트맵: 마켓 × 월별 MoM 성장율")
+    if mkt_mom and markets and data_months:
+        z_vals = []
+        text_vals = []
+        for m in markets:
+            row = []
+            text_row = []
+            for mo in data_months[1:]:  # 첫 달은 MoM 없음
+                v = mkt_mom.get(m, {}).get(mo)
+                row.append(v * 100 if v is not None else 0)
+                text_row.append(fmt_pct(v) if v is not None else "-")
+            z_vals.append(row)
+            text_vals.append(text_row)
+
+        x_months = data_months[1:]
+        fig_hm = go.Figure(go.Heatmap(
+            z=z_vals,
+            x=x_months,
+            y=markets,
+            text=text_vals,
+            texttemplate="%{text}",
+            textfont=dict(size=11),
+            colorscale=[
+                [0.0, "#DC2626"],
+                [0.5, "#FFFFFF"],
+                [1.0, "#16A34A"],
+            ],
+            zmid=0,
+            colorbar=dict(title="MoM(%)"),
+            hovertemplate="%{y}<br>%{x}<br>MoM: %{z:.1f}%<extra></extra>",
+        ))
+        fig_hm.update_layout(
+            **CHART_LAYOUT,
+            height=max(280, len(markets) * 40 + 60),
+            title=dict(text="마켓별 월별 MoM 히트맵", font=dict(size=14), x=0.01),
+            xaxis=dict(title="월"),
+            yaxis=dict(title="마켓"),
+        )
+        st.plotly_chart(fig_hm, use_container_width=True)
+    else:
+        no_data()
+
+# ══════════════════════════════════════════════════════
+#  TAB 7: 반품 분석
+# ══════════════════════════════════════════════════════
+def tab_return(D):
+    markets       = D.get("markets", [])
+    mkt_colors    = D.get("mktColors", {})
+    data_months   = D.get("dataMonths", [])
+
+    return_rate   = D.get("returnRateMkt", {})
+    return_qty    = D.get("returnQtyMkt", {})
+    return_rev    = D.get("returnRevMkt", {})
+    return_rate_m = D.get("returnRateMktMonth", {})
+
+    # ── 마켓별 반품율 바 차트 ───────────────────────────
+    section_header("마켓별 반품율")
+    if return_rate:
+        r_markets = [m for m in markets if m in return_rate]
+        r_rates   = [return_rate[m] * 100 for m in r_markets]
+        r_colors  = [mkt_colors.get(m, "#9CA3AF") for m in r_markets]
+
+        fig = go.Figure()
+        fig.add_bar(
+            x=r_markets, y=r_rates,
+            marker_color=r_colors, marker_line_width=0,
+            text=[f"{r:.1f}%" for r in r_rates],
+            textposition="outside", textfont_size=12,
+            hovertemplate="%{x}<br>반품율: %{y:.2f}%<extra></extra>",
+        )
+        fig.update_layout(
+            **CHART_LAYOUT, height=300, showlegend=False,
+            yaxis=dict(title="반품율(%)", showgrid=True, gridcolor="#F3F4F6",
+                       range=[0, max(r_rates) * 1.3 if r_rates else 10]),
+            xaxis=dict(showgrid=False),
+            title=dict(text="마켓별 반품율", font=dict(size=14), x=0.01),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        no_data("반품율 데이터가 없습니다.")
+
+    # ── 월별 반품율 추이 ────────────────────────────────
+    st.markdown("---")
+    section_header("월별 반품율 추이 (마켓별)")
+    if return_rate_m and data_months:
+        sel_mkts_ret = st.multiselect(
+            "마켓 선택", markets, default=markets[:4] if len(markets) >= 4 else markets,
+            key="ret_mkts_sel",
+        )
+        if sel_mkts_ret:
+            fig2 = go.Figure()
+            for m in sel_mkts_ret:
+                rates_mo = [
+                    (return_rate_m.get(mo, {}).get(m, 0) or 0) * 100
+                    for mo in data_months
+                ]
+                fig2.add_scatter(
+                    x=data_months, y=rates_mo, name=m, mode="lines+markers",
+                    line=dict(color=mkt_colors.get(m, "#9CA3AF"), width=2),
+                    marker=dict(size=6),
+                    hovertemplate=f"{m}<br>%{{x}}<br>반품율: %{{y:.2f}}%<extra></extra>",
+                )
+            fig2.update_layout(
+                **CHART_LAYOUT, height=320,
+                yaxis=dict(title="반품율(%)", showgrid=True, gridcolor="#F3F4F6"),
+                xaxis=dict(showgrid=False),
+                title=dict(text="월별 마켓 반품율 추이", font=dict(size=14), x=0.01),
+            )
+            st.plotly_chart(fig2, use_container_width=True)
+        else:
+            no_data("마켓을 선택해주세요.")
+    else:
+        no_data()
+
+    # ── 반품 상세 테이블 ────────────────────────────────
+    st.markdown("---")
+    section_header("마켓별 반품 상세")
+    rows_r = []
+    for m in markets:
+        rate = return_rate.get(m)
+        qty  = return_qty.get(m, 0)
+        rev  = return_rev.get(m, 0)
+        if rate is not None or qty or rev:
+            rows_r.append({
+                "마켓": m,
+                "반품율": f"{rate*100:.2f}%" if rate is not None else "-",
+                "반품수량": fmt_qty(qty),
+                "반품금액": fmt_won(rev),
+            })
+    if rows_r:
+        st.dataframe(pd.DataFrame(rows_r), use_container_width=True, hide_index=True)
+    else:
+        no_data()
+
+    # ── 월별 반품 상세 테이블 ────────────────────────────
+    if return_rate_m and data_months:
+        st.markdown("---")
+        section_header("월별 반품율 상세 테이블")
+        sel_ret_month = st.selectbox("기준 월", data_months, index=len(data_months)-1, key="ret_month_sel")
+        month_data = return_rate_m.get(sel_ret_month, {})
+        if month_data:
+            rows_m = []
+            for m in markets:
+                rate = month_data.get(m)
+                if rate is not None:
+                    rows_m.append({"마켓": m, "반품율": f"{rate*100:.2f}%"})
+            if rows_m:
+                st.dataframe(pd.DataFrame(rows_m), use_container_width=True, hide_index=True)
+            else:
+                no_data()
+        else:
+            no_data()
 
 # ══════════════════════════════════════════════════════
 #  메인
 # ══════════════════════════════════════════════════════
 def main():
-    # ── 헤더 ─────────────────────────────────────────
-    h1, h2, h3 = st.columns([4, 3, 2])
-    with h1:
-        st.markdown("## 📊 JBL 실판매현황")
-    with h2:
-        D_quick = load_data()
-        if D_quick:
-            st.caption(f"기간: {D_quick.get('period','-')}  |  업데이트: {D_quick.get('updated','-')}")
-    with h3:
-        bc1, bc2 = st.columns(2)
-        with bc1:
-            # 클라우드 환경에서는 생성 버튼 숨김
-            if _is_cloud():
-                if st.button("🔄 새로고침", help="최신 데이터로 새로고침"):
-                    load_data_cloud.clear()
-                    st.rerun()
-            elif st.button("📊 생성", help="Excel·PC HTML·모바일 대시보드 모두 생성"):
-                with st.spinner("데이터 생성 중... (30초~1분 소요)"):
-                    log, err = run_full_pipeline()
-                st.cache_data.clear()
-                if err:
-                    st.error("생성 중 오류가 발생했습니다.")
-                    with st.expander("오류 상세 내용 (클릭해서 보기)"):
-                        st.code(err, language="text")
-                        if log:
-                            st.text("--- 실행 로그 ---")
-                            st.code(log, language="text")
-                else:
-                    # 성공 여부를 로그에서 판단 (HTML 생성 경고 여부 확인)
-                    if "[경고] HTML 대시보드 생성 실패" in log:
-                        st.warning("엑셀은 생성됐지만 HTML 대시보드 생성에 문제가 있습니다.")
-                        with st.expander("실행 로그 확인"):
-                            st.code(log, language="text")
-                    else:
-                        st.success("생성 완료!")
-                    time.sleep(0.5)
-                    st.rerun()
-        with bc2:
-            if st.button("🔄 새로고침", help="화면 데이터만 새로고침"):
-                st.cache_data.clear()
-                st.rerun()
+    # 헤더
+    col1, col2, col3 = st.columns([4, 3, 2])
+    with col1:
+        st.markdown("## 🎵 JBL 실판매 대시보드")
+    with col2:
+        pass  # 데이터 로드 후 표시
+    with col3:
+        refresh = st.button("🔄 새로고침", use_container_width=True)
+        if refresh:
+            st.cache_data.clear()
+            st.rerun()
 
-    # ── 데이터 로드 ───────────────────────────────────
-    D = load_data()
+    # 데이터 로드
+    with st.spinner("데이터 로딩 중..."):
+        D = load_data()
+
     if D is None:
-        if _is_cloud():
-            st.error("⚠️ 데이터를 불러오지 못했습니다.")
-            st.markdown("**🔄 새로고침** 버튼을 눌러주세요. 계속 오류가 나면 담당자에게 문의하세요.")
-            return
-        import os as _os
-        FOLDER = _os.path.dirname(_os.path.abspath(__file__))
-        master = _os.path.join(FOLDER, "데이터_마스터.xlsx")
-        if not _os.path.exists(master):
-            st.error("⚠️ `데이터_마스터.xlsx` 파일이 없습니다.")
-            st.markdown("같은 폴더에 `데이터_마스터.xlsx` 파일을 넣은 뒤 **📊 생성** 버튼을 눌러주세요.")
-        else:
-            st.error("⚠️ 데이터 처리 중 오류가 발생했습니다.")
-            st.markdown("""
-**조치 방법**
-1. **📊 생성** 버튼을 눌러서 데이터를 다시 생성해보세요.
-2. 생성 후 오류 메시지가 표시되면 내용을 확인해주세요.
-3. `데이터_마스터.xlsx` 파일이 Excel에서 열려있으면 닫은 후 다시 시도해주세요.
-            """)
-            # 상세 오류 표시
-            import io, sys, traceback
-            import process_sales as _ps
-            buf = io.StringIO()
-            old_out = sys.stdout; sys.stdout = buf
-            try:
-                _ps.get_dash_data()
-            except Exception:
-                pass
-            finally:
-                sys.stdout = old_out
-            detail = buf.getvalue()
-            if detail:
-                with st.expander("오류 상세 (클릭)"):
-                    st.code(detail, language="text")
+        st.error("데이터를 불러올 수 없습니다. dash_data.json 파일을 확인해주세요.")
         return
 
-    # ── 월 선택 (selectbox — 모바일 친화) ────────────
-    report_month = D.get("reportMonth", 0)
-    month_opts   = [0] + list(range(1, 13))
-    month_fmt    = {0:"전체"} | {m:f"{m}월" for m in range(1,13)}
-    default_idx  = month_opts.index(report_month) if report_month in month_opts else 0
+    # 헤더 메타 정보
+    with col2:
+        st.caption(f"기간: {D.get('period', '-')} | 업데이트: {D.get('updated', '-')}")
 
-    sel_month = st.selectbox(
-        "기간 선택",
-        month_opts,
-        index=default_idx,
-        format_func=lambda x: month_fmt[x],
-        key="global_month",
-    )
-
-    # ── 4개 탭 ───────────────────────────────────────
-    t1, t2, t3, t4 = st.tabs([
-        "📊 마켓별 매출",
-        "📈 매출 추이",
-        "🎯 세그먼트 추이",
-        "📋 모델별 판매",
+    # 탭
+    tabs = st.tabs([
+        "📊 개요",
+        "🏪 마켓별",
+        "📦 모델별",
+        "🎯 세그먼트별",
+        "📈 추이",
+        "🔄 성장/하락",
+        "↩️ 반품",
     ])
-    with t1: tab_market(D, sel_month)
-    with t2: tab_trend(D, sel_month)
-    with t3: tab_segment(D, sel_month)
-    with t4: tab_models(D, sel_month)
+
+    with tabs[0]:
+        tab_overview(D)
+    with tabs[1]:
+        tab_market(D)
+    with tabs[2]:
+        tab_model(D)
+    with tabs[3]:
+        tab_segment(D)
+    with tabs[4]:
+        tab_trend(D)
+    with tabs[5]:
+        tab_growth(D)
+    with tabs[6]:
+        tab_return(D)
 
 
 if __name__ == "__main__":
